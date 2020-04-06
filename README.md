@@ -2,6 +2,8 @@
 
 Carlyn Savino
 
+Spring 2020
+
 This repository sets up the basic structure for your final project which will display/contain all of your work.
 
 You are welcome to create/remove subdirectories as you see fit, but stay as organized as possible so others will be able to naviagte and inspect your work.
