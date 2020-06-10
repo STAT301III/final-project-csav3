@@ -1,0 +1,442 @@
+---
+title: "Global Human Development in 2016"
+author: "Carlyn Savino"
+date: "June 12, 2020"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE, message=FALSE}
+# load packages
+library(tidyverse)
+library(modelr)
+library(janitor)
+library(skimr)
+library(broom)
+library(glmnet)
+library(glmnetUtils)
+library(purrr)
+library(caret)
+library(xgboost)
+library(randomForest)
+library(keras)
+
+set.seed(3)
+```
+
+# Executive Summary
+
+This project focuses on the 2016 Human Development Report. This is a yearly report published by the United Nations that examines many different lifestyle, health, and economic factors in order to evaluate every country's human development. In short, human development is defined as the process of expanding people's freedoms and opportunities, leading to an improvement in their wellbeing. Higher human development is associated with a higher quality of life. The dataset originally contained 195 observations (one for every country in the world), but 177 remained after missing values were removed. Both the unprocessed and processed datasets can be found in the "data" subdirectory.
+
+I sought to answer two main research questions in my analysis:
+
+1) Can life expectancy and mean years of schooling predict a country's HDI rank?
+2) Can the number of Internet users predict a country's unemployment rate?
+
+I chose these questions due to interest on my part, as well as insights gleaned from my EDA (Exploratory Data Analysis). I used several different model building techniques to answer the questions, which were both regression problems. For the first question, I employed ridge and lasso regression methods because the predictors were strongly correlated. For the second question, I employed random forest and deep learning methods because there were outliers present in my response variable. The models were trained on a dataset that consisted of 80% of the overall data. Their performance was then evaluated on the remaining 20% of the data. The final results are below:
+
+Question 1:
+```{r, echo=FALSE, message=FALSE}
+read_rds("results/Q1_Results.rds")
+```
+
+Question 2:
+```{r, echo=FALSE, message=FALSE}
+read_rds("results/Q2_Results.rds")
+```
+
+None of the models performed all that well. The best model from the first question produced a Test RMSE of 18.39, meaning that the model missed actual ranking values by about 18 spots. The best model from the second question produced a Test RMSE of 10.2, meaning that the model missed actual unemployment rate values by about 10%. There were a couple of analytical decisions I made throughout this process that may have impacted model performance. First, I chose not to remove outliers from my data. I made this decision because the outliers were a natural part of my data, not the result of erroneous data entry or anything of that nature. Second, I did not create any interaction effect between the two predictors in my first research question. Perhaps doing so would have resulted in a better outcome.
+
+# Introduction
+
+Every year, the United Nations Development Programme publishes the Human Development Report. Since its initial publication in 1990, the report has consistently provided a thorough examination of the factors that make a country developed. At a basic level, development (as it pertains to humans) is defined as the process of expanding people's freedoms and opportunities, leading to an improvement in their wellbeing. The UN affirms that the key to human development lies amid the trifecta of "people, opportunities, and choice". Development means that the people have the freedom to decide who to be, what to do, and how to live. 
+
+Historically, GDP (Gross Domestic Product) has often been used to express a country's development, but it only provides a small glimpse of how people around the world are faring. The UN's report challenges this idea that economic growth will automatically lead to a country's development; it shows that there are actually many factors that affect development, such as education and access to the Internet. What really makes a country developed is not so easy to define; this notion is what interested me in using this data for my final project.
+
+I obtained my dataset from Kaggle; the author of the dataset pulled the data directly from the actual 2016 Human Development Report. The pre-processed data contained 195 observations, one for every country in the world. There are 177 countries remaining after missing values were removed. There are also 82 different variables, each representing a metric of human development. The ones most pertinent to my project are `Country`, `HDI Rank`, `HDI`, `Life Expectancy`, `Mean Years of Schooling`, `Gender Development Index`, `Population`, `Total Unemployment Rate`, and `Internet Users.` I will not explicitly use `Gender Development Index` or `Population` in my project, but I mentioned them because I believe they are significant in contextualizing the human development rankings, and are good to take note of. For more specific information regarding what each variable represents, please refer to the codebook found in the "data/processed" subdirectory. The tidied data can also be found there.
+
+There are two main research questions that I seek to answer: 
+
+1) Can life expectancy and mean years of schooling predict a country's HDI rank?
+2) Can the number of Internet users predict a country's unemployment rate?
+
+I chose these questions due to interest on my part, as well as insights gleaned from my EDA. I will use several different model fitting techniques to answer these questions and report on the results.
+
+
+```{r, warning = FALSE, message=FALSE, echo=FALSE}
+# load datasets, and do some processing of the data used for the following map.
+hdi_rep <- read_rds("data/processed/hdi_dat.rds") 
+
+world <- map_data("world")
+
+hdi_map <- read.csv("data/processed/WDVP Datasets - what makes a 'good' government_.csv",
+                    header = TRUE)
+
+hdi_map <- select(hdi_map, region = indicator, "HDI" = `human.development.index`, "CC" = ISO.Country.code)
+
+hdi_map <- hdi_map[-c(1:4), ]
+
+diff <- setdiff(world$region, hdi_map$region)
+
+hdi_map <- hdi_map %>%
+  ## Recode entries
+  mutate(region = recode(str_trim(region), "United States" = "USA",
+                            "United Kingdom" = "UK",
+                            "Korea (Rep.)" = "South Korea",
+                            "Congo (Dem. Rep.)" = "Democratic Republic of the Congo",
+                            "Congo (Rep.)" = "Republic of Congo")) %>%
+  mutate(region = case_when((CC == "PRK") ~ "North Korea",
+                               TRUE ~ as.character(.$region)))
+
+## Make the HDI numeric
+hdi_map$HDI <- as.numeric(as.character(hdi_map$HDI))
+
+total_world <- inner_join(world, hdi_map, by = "region")
+
+```
+
+# Model Building
+
+Before diving right into the actual model building, I want to first create a visual representation of HDIs (Human Development Indices) across the world in order to establish context and better set the scene for my project. The world map below displays every country in the world, colored according to HDI value. HDI values range from 0 to 1, with 0 representing the lowest level of development and 1 representing the highest.
+
+```{r, echo=FALSE, message=FALSE}
+world_map <- ggplot(data = total_world, 
+                    mapping = aes(x = long, y = lat, group = group)) + 
+  coord_fixed(1.3) +
+  geom_polygon(aes(fill = HDI)) +
+  scale_fill_distiller(palette ="RdBu", direction = -1) + 
+  ggtitle("Global Human Development Index (HDI)") +
+  theme_void()
+
+world_map
+
+```
+
+Now that a general idea of each country's HDI has been established, we will move on to my first research question: Can life expectancy and mean years of schooling predict a country's HDI rank?
+
+## Research Question #1
+
+First, I split the data into a training set (80% of the data) and a test set (20% of the data). The training set was used to build models, while the test set was used to evaluate model performance. I felt that my dataset, with less than 200 observations, was not large enough for a further performance set split. 
+
+```{r, message=FALSE, echo=FALSE}
+hdi_test <- hdi_rep %>% sample_frac(0.20)
+
+hdi_train <- hdi_rep %>% setdiff(hdi_test)
+```
+
+When exploring relationships among variables in the EDA, I found that the two predictor variables for this question (`Mean Years of Schooling` and `Life Expectancy`) had a relatively high level of correlation between them. Here is a correlation plot that confirms this:
+
+```{r, message = FALSE, echo=FALSE}
+# obtain relevant columns
+rel_cols <- hdi_train[c(2, 4:5)]
+
+# store the correlation
+corr <- cor(rel_cols)
+
+# create the plot
+corrplot::corrplot(corr)
+```
+
+We can see that the predictor variables are quite correlated with each other (specifically, they have a correlation of roughly .71), so the issue of multicollinearity is present. To mitigate this problem, I employed ridge and lasso regression approaches to model building for my first research question. I began by using 5-fold cross-validation (since my dataset is quite small) to obtain optimal lambda values. The corresponding ridge and lasso cross-validation plots are below:
+
+```{r, message=FALSE, echo=FALSE}
+# use a lambda grid to search (200 values)
+lambda_grid <- 10^seq(-2, 10, length = 200)
+```
+
+
+```{r, message=FALSE, echo=FALSE}
+# perform ridge regression using 5-fold cross-validation (since my dataset is quite small)
+ridge_cv <- hdi_train %>% 
+  cv.glmnet(
+    formula = HDI_Rank ~ Life_Expectancy + Mean_Years_of_Schooling, 
+    data = ., 
+    alpha = 0, 
+    nfolds = 5,
+    lambda = lambda_grid
+  )
+```
+
+```{r, message=FALSE, echo=FALSE}
+# plot cv error
+plot(ridge_cv)
+```
+
+```{r, message=FALSE, echo=FALSE}
+# obtain ridge's best lambdas
+ridge_lambda_min <- ridge_cv$lambda.min
+ridge_lambda_1se <- ridge_cv$lambda.1se
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# perform lasso regression using 5-fold cv
+lasso_cv <- hdi_train %>% 
+  cv.glmnet(
+    formula = HDI_Rank ~ Life_Expectancy + Mean_Years_of_Schooling, 
+    data = ., 
+    alpha = 1, 
+    nfolds = 5
+  )
+```
+
+```{r, message=FALSE, echo=FALSE}
+# plot cv error
+plot(lasso_cv)
+```
+
+```{r, message=FALSE, echo=FALSE}
+# obtain lasso's best lambdas
+lasso_lambda_1se <- lasso_cv$lambda.1se
+lasso_lambda_min <- lasso_cv$lambda.min
+```
+
+```{r, message=FALSE, echo=FALSE}
+# fit to training data
+hdi_glmnet <- tibble(
+  train = hdi_train %>% list(),
+  test = hdi_test %>% list()
+) %>%
+  mutate(
+    ridge_min = map(train, ~ glmnet(HDI_Rank ~ Life_Expectancy + Mean_Years_of_Schooling,
+                                    data = .x, alpha = 0, lambda = ridge_lambda_min)),
+    ridge_1se = map(train, ~ glmnet(HDI_Rank ~ Life_Expectancy + Mean_Years_of_Schooling,
+                                    data = .x, alpha = 0, lambda = ridge_lambda_1se)),
+    lasso_min = map(train, ~ glmnet(HDI_Rank ~ Life_Expectancy + Mean_Years_of_Schooling,
+                                    data = .x, alpha = 1, lambda = lasso_lambda_min)),
+    lasso_1se = map(train, ~ glmnet(HDI_Rank ~ Life_Expectancy + Mean_Years_of_Schooling,
+                                    data = .x, alpha = 1, lambda = lasso_lambda_1se)))   %>%
+  pivot_longer(cols = c(-test, -train), names_to = "method", values_to = "fit")
+```
+
+```{r, message=FALSE, echo=FALSE}
+glmnet_error <- hdi_glmnet %>% 
+  mutate(pred = map2(fit, test, predict),
+         test_rmse = map2_dbl(test, pred, ~ sqrt(mean((.x$HDI_Rank - .y)^2)))) %>% 
+  unnest(test_rmse) %>% 
+  select(method, test_rmse)
+```
+
+After fitting the ridge and lasso models, I calculated the test root mean squared errors and compared them. All of the errors were relatively close to one another, but the lasso regression model using `lambda.1se` produced the lowest root mean squared error (18.39). Thus, it was the best model in this case. We can conclude that, because it had the lowest root mean squared error, the model produced the smallest difference overall between observed and predicted values. The results are below:
+
+```{r, message=FALSE, echo=FALSE}
+lasso_ridge_results <- glmnet_error %>% 
+  arrange(test_rmse) %>%
+  knitr::kable(digits = 2)
+
+lasso_ridge_results
+```
+
+## Research Question #2
+
+My second research question is: Can the number of Internet users predict a country's unemployment rate? Because so many of today's jobs are advertised, applied to, and filled on websites such as LinkedIn and Indeed, I was curious to explore the relationship between unemployment and Internet access.
+
+When exploring the response variable (`2015_Total_Unemployment_Rate`) in my EDA, I discovered the presence of several outliers. A basic boxplot confirms this:
+
+```{r, message=FALSE, echo=FALSE}
+boxplot(hdi_train$`2015_Total_Unemployment_Rate`)
+```
+
+The median unemployment rate is around 7%, but there are several countries with very high rates; one country, the Solomon Islands, has an unemployment rate of nearly 35%. 
+
+Because of the presence of outliers, I began by creating a random forest model. Decision tree models are robust to outliers because they divide the predictor space into distinct, non-overlapping regions. I used 5-fold cross-validation for the resampling method, and I tuned `ntree` by iterating through several different values (100, 250, 500, 1000). The best value of `ntree` ended up being 100. I did not tune `mtry`; its value had to be 1, since there was only 1 predictor variable in this question. I then refitted the random forest model using the optimal `ntree` value and created predictions on the test set. The resulting RMSE was approximately 11.24.
+
+```{r, message=FALSE, echo=FALSE}
+# use 5-fold CV for the resampling method
+tc <- trainControl(method = "cv", number = 5)
+
+# mtry must be 1, since there is only one predictor variable in this case
+tg <- expand.grid(.mtry = 1)
+
+# tune the number of trees by iterating through some different values, and fit the model
+modellist <- list()
+for (ntree in c(100, 250, 500, 1000)) {
+rf_fit <- train(`2015_Total_Unemployment_Rate` ~ Internet_Users, 
+                       data = hdi_train,
+                       method = 'rf',
+                       tuneControl = tc,
+                       tuneGrid = tg,
+                       ntree = ntree)
+	key <- toString(ntree)
+	modellist[[key]] <- rf_fit}
+
+results <- resamples(modellist)
+
+```
+
+
+```{r, message=FALSE, echo=FALSE}
+rf_fit_tuned <- train(`2015_Total_Unemployment_Rate` ~ Internet_Users, 
+                       data = hdi_train,
+                       method = 'rf',
+                       tuneControl = tc,
+                       tuneGrid = tg,
+                       ntree = 100)
+
+# use the model to make predictions on the test set
+preds <- predict(rf_fit_tuned, hdi_test)
+
+# calculate the RMSE
+rmse <- sqrt(mean((hdi_test$`2015_Total_Unemployment_Rate` - preds)^2))
+
+
+```
+
+I was also interested in how a neural network would perform in this case. I fit a deep learning model after normalizing the input columns to better resist the effects of outliers. My final model had 2 hidden layers and a batch size of 16, and was trained on 500 epochs. I manually tuned these parameters by trying many different values until I found ones that created the most optimal results. The resulting RMSE was approximately 10.2. Since this value was lower than the RMSE of the random forest, the deep learning model ended up being the "best" model for this particular research question. 
+
+```{r, message=FALSE, echo=FALSE}
+# one hot encode. select the predictor variable from the data and formulate predictions
+one_hot_rules <- hdi_train %>%
+select(Internet_Users) %>%
+onehot::onehot()
+
+train_dat_ohe <- hdi_train %>%
+select(Internet_Users) %>%
+predict(one_hot_rules, data = .)
+
+test_dat_ohe <- hdi_test %>%
+select(Internet_Users) %>%
+predict(one_hot_rules, data = .)
+```
+
+```{r, message=FALSE, echo=FALSE}
+# pull response variable from the data
+train_targets <- hdi_train %>%
+pull(`2015_Total_Unemployment_Rate`) 
+
+test_targets <- hdi_test %>%
+pull(`2015_Total_Unemployment_Rate`)
+
+# normalize each column in the matrix
+means_train_dat <- apply(train_dat_ohe, 2, mean)
+sd_train_dat <- apply(train_dat_ohe, 2, sd)
+
+train_data <- scale(train_dat_ohe, center = means_train_dat,
+scale = sd_train_dat)
+
+test_data <- scale(test_dat_ohe, center = means_train_dat,
+scale = sd_train_dat)
+
+# create model with 2 hidden layers
+model <- keras_model_sequential() %>%
+layer_dense(units = 64, activation = "relu",
+input_shape = dim(train_data)[[2]]) %>%
+layer_dense(units = 64, activation = "relu") %>%
+layer_dense(units = 1)
+
+# compile model using appropriate optimizer/loss/metrics
+model %>% compile(
+optimizer = "rmsprop",
+loss = "mse",
+metrics = c("mse")
+)
+```
+
+```{r, eval = FALSE, message=FALSE, echo=FALSE}
+# fit on training data
+hdi_fit <- model %>%
+fit(train_data, train_targets,
+epochs = 500, batch_size = 16)
+
+# evaluate the model on the test set
+hdi_res1 <- model %>% 
+  evaluate(test_data, test_targets)
+```
+
+# Conclusion
+
+For each research question, I arrived at my candidate models based on the kind of question I was asking (both were regression problems), as well as analyses conducted in my EDA regarding correlation and outliers. Since my first question was a regression problem with multicollinearity, I used ridge and lasso regression methods. Since my second question was a regression problem with outliers present, I used random forest and deep learning methods. Then, I selected the best model for each question based on how well it performed on a test dataset. Below are the final results for each question.
+
+Question 1:
+
+```{r, message=FALSE, echo=FALSE}
+res_q1 <- matrix(c(18.39, 18.48, 18.5, 18.53))
+
+colnames(res_q1) <- c("Test RMSE")
+
+rownames(res_q1) <- c("Lasso 1 SE", "Ridge 1 SE", "Lasso Min", "Ridge Min")
+
+res_q1 <- as.table(res_q1)
+
+res_q1
+```
+
+Question 2:
+
+```{r, echo=FALSE, message=FALSE}
+res_q2 <- matrix(c(10.2, 11.24))
+
+colnames(res_q2) <- c("Test RMSE")
+
+rownames(res_q2) <- c("Deep Learning", "Random Forest")
+
+res_q2 <- as.table(res_q2)
+
+res_q2
+```
+
+Evaluating the performance of these models can be a bit tricky. Obviously, lower RMSE means higher model accuracy, but there is no concrete definition of what a "good" RMSE is. However, since RMSE values are always measured in the same units as the model's response variable, it is possible to analyze RMSE values within the context of particular data.
+
+Let us begin by considering the first research question. The response variable was `HDI_Rank`; thus, we can let the units in this case be "ranking spots". The RMSE resulting from the most accurate model was 18.39, meaning that the model misses actual ranking values by about 18 spots. Since the values in the `HDI_Rank` column range from 1-188 (there are some ties), I believe the performance of this model is moderate. It is not excellent (e.g. missing by just a few spots), but it is not terrible either (e.g. missing by dozens). Consider a country that has an actual HDI Rank of 20, but the model predicts its rank to be 38. This is a pronounced change, but I do not believe it is drastic.
+
+Now, let us consider the second research question. The response variable was `2015_Total_Unemployment_Rate`, so the units in this case are percentage points. The RMSE resulting from the most accurate model was 10.2, meaning that the model misses actual unemployment rate values by about 10%. The values in the `2015_Total_Unemployment_Rate` only range from roughly 0-54; therefore, the model does not perform very well in the context of this problem. A 10% change is quite significant in terms of unemployment rate; for context, the unemployment rate in the U.S. increased by roughly 10% between March and April 2020 due to the coronavirus pandemic, which dreadfully impacted the livelihoods of many Americans.
+
+There were a couple of analytical decisions I made throughout this process that may have impacted model performance. First, I chose not to remove outliers from my data. I made this decision because the outliers were a natural part of my data, not the result of erroneous data entry or anything of that nature. Some countries really do have very high rates of unemployment, and I felt that their presence was of value to my analysis. Second, I did not create any interaction effect between the two predictors in my first research question. Doing so may have resulted in a different outcome; perhaps the interaction term may have been statistically significant, and its inclusion would have increased the model's accuracy.
+
+Because the Human Development Report encompasses a plethora of data, there are definitely many further questions and relationships that can be explored. Unsupervised learning methods can be used to cluster countries and investigate similarities. An additional dataset focusing on global food security can be integrated, and relationships between human development and access to food can be explored. It would also be interesting to examine the very first Human Development Report that came out in 1990 and see how much (or how little) things have changed in the past 30 years.
+
+# Appendix (EDA)
+
+Below is the Exploratory Data Analysis report, which was conducted before I began work on the main project.
+
+## Data Overview
+
+Every year, the United Nations Development Programme publishes the Human Development Report. The report combines various statistics such as life expectancy, income, and years of schooling to rank every country according to its overall level of human development. The data was collected directly from the 2016 report (the entirety of which can be found here: http://hdr.undp.org/sites/default/files/2016_human_development_report.pdf). Below is the source of the dataset that will be used for this project. There are 195 observations (one for every country in the world) and many variables.
+
+Kumar, Sudhir (2018): "Human Development Reports." Version 5. Kaggle. https://www.kaggle.com/sudhirnl7/human-development-index-hdi
+
+Missingness is quite prevalent in this dataset. There is a total of 2041 missing values across all columns. In general, the easier the statistic is to obtain, the less likely that missing values will be present. For example, there are no missing values in the columns that cover population counts/trends because that data is systematically obtained through measures such as censuses. On the other hand, almost half of the countries are missing data that covers the unemployment rate of youth ages 15-24 who are not in school, which is quite specific and probably harder to obtain information on. I did not split the data for this EDA, since each row represents a country.
+
+## Essential Findings
+
+There are two main research questions I seek to answer through my project:
+
+1) Can mean years of schooling and life expectancy predict a country's HDI rank?
+2) Can the number of Internet users predict a country's unemployment rate?
+
+The first question is more of an obvious/expected question for this type of data (although maybe the results will end up subverting expectations). The second question is one people may not think about as much, and it may not have as obvious of an answer.
+
+### Response Variables
+
+To begin, I performed univariate analysis on the first response variable, `HDI Rank.` This is a numeric variable that contains the Human Development Index Ranking for every country. According to the UN, HDI represents a "statistic composite index of life expectancy, education, and per capita income indicators, which are used to rank countries into four tiers of human development." First, I will report some central tendency measures. Norway has the best HDI (rank 1 and HDI of .949), while Central African Republic has the lowest (rank 188 and HDI of .352). The minimum and maximum values are no surprise: 1 for the country with the best HDI, and 188 for the country with the worst HDI (there are 195 countries, but there are some ties). The standard deviation of `HDI Rank` is 54.44.
+
+Next, I performed univariate analysis on the second response variable, `Total Unemployment Rate.` This variable denotes the percentage of the total labor force that was unemployed in 2015. Djibouti had the highest unemployment rate at 53.9, while Qatar had the lowest at 0.2. The median unemployment rate was 7.1, while the mean was 9.336. Next, I performed calculations to determine if there are any outliers. There ended up being 14. To make my models more robust to these outliers, I can use methods such as tree-based modeling or KNN in my final project. Finally, in terms of dispersion measures, the range of the unemployment rate is large, at 53.7. The standard deviation is 7.53.
+
+### Predictor Variables
+
+Now it is time to analyze the predictor variables. First up is `Mean Years of Schooling.` This variable is self explanatory; it denotes the average number of years that individuals in each country are in school. Switzerland had the highest average, at 13.4 years. Burkina Faso had the lowest, at 1.4 years (which is actually quite astounding). The median was 8.65, while the mean was 8.37. There are no outliers. The range of this variable is 12, and the standard deviation is 3.1.
+
+The next predictor is `Life Expectancy.` Hong Kong has the highest life expectancy, at 84.2 years old. Swaziland has the lowest, at just 48.9 years old. This finding is quite remarkable in highlighting the disparities between highly developed and less developed countries. The median life expectancy is 73.3 years old, and the mean is 71.27 years old. There are no outliers. The range of this variable is 35.3 years, and the standard deviation is 8.33.
+
+The last predictor is `Internet Users.` This variable measures the percentage of the population that has access to and uses the Internet. Iceland has the highest amount of Internet users, at 98.2. Eritrea has the lowest, with only 1.1 percent of its population using the Internet. This is another eye-opening statistic. The Internet is something so many of us use and take for granted today, but there are many people who lack access to it. The median percentage of Internet users is 47.4, and the mean is 46.93. These values are also actually surprisingly low. There are no outliers. The range of this variable is a whopping 97.1, and the standard deviation is also quite high, at 28.86.
+
+### Response/Predictor Relationships
+
+I first explored the relationship between `HDI Rank` (response variable for my first research question) and `Mean Years of Schooling` (one of two predictors for my first research question). I found the correlation between the two, which ended up being approximately -.9. This is a very strong relationship.
+
+I also explored the relationship between `HDI Rank` and `Life Expectancy.` Their correlation was -.89. Again, this is a very strong relationship. The correlations tell us that lower `HDI Rank` values (which correspond to higher `HDI`s) are associated with higher `Mean Years of Schooling` and `Life Expectancy` values, and vice versa. This seems sensible.
+
+Now, regarding my second research question, the correlation between `Unemployment Rate` and `Internet Users` is -.1.  Unlike in my first research question, there is not much of a relationship at all. The model building process for this question will be more unpredictable and interesting. A weak linear relationship does not necessarily indicate that the model will perform poorly.
+
+### Predictor Relationships
+
+There is only one predictor variable for my second research question, so I explored the relationship between the two predictor variables from my first research question: `Life Expectancy` and `Mean Years of Schooling.` I began by finding the correlation, which ended up being about .75. This correlation leans on the stronger side; therefore, I think it's safe to deem multicollinearity a potential issue when building models, but I can use methods such as ridge and lasso regression to help combat this. I also investigated missingness in the two variables. `Mean Years of Schooling` only had 7 missing values, and `Life Expectancy` only had 5. There is no significant chunk of data missing in either variable, which bodes well for model building.
+
+## Secondary Findings
+
+I conducted some additional explorations of variables that I do not currently deem as important to my project. First, I chose to investigate the variable `Share of Seats in Parliament Held by Women`. This variable is definitely important in and of itself, but I am not using it in my project. I thought it would be something interesting and unique to explore on the side. There were 4 countries that have no women at all in Parliament: Qatar, Tonga, Micronesia, and Vanuatu. 3 of these countries are in the Oceania region. The country with the most women in Parliament was Rwanda, at a share of 57.5. Rwanda is an outlier, as confirmed by a boxplot. The median of this variable is 19.4, and the mean is 20.67; both were pretty low.
+
+I also performed explorations of `Mean Years of Schooling - Male` and `Mean Years of Schooling - Female.` These variables are in my domain area but are not very important, since I am using the broader `Mean Years of Schooling` variable in my first research question. Australia had the highest mean years of schooling for females, at 13.4 years. Burkina Faso had the lowest, with only a mean of 1 year of schooling. For males, Germany had the highest, at 13.6 years. Burkina Faso once again had the lowest, at 2 years. The mean for the males data was 8.84 years, while for females it was 8.1. The median for the males was 9 years, while for females it was 8.6. In general, males spend slightly more time in school than females. There are no outliers in either variable. When comparing these two variables to the broader `Mean Years of Schooling` variable that was explored earlier, there is really nothing surprising. Burkina Faso represented the minimum value for that broad variable as well; the mean and median were also similar to the ones found in the current analysis. Thus, the findings here are not too interesting or important, but I could see their potential if someone wanted to analyze a country's development solely through a gender-oriented lens.

@@ -1,0 +1,24 @@
+My processed dataset is "hdi_dat.rds"
+
+Citation for the original dataset:
+Kumar, Sudhir (2018): "Human Development Reports." Version 5. Kaggle. https://www.kaggle.com/sudhirnl7/human-development-index-hdi
+
+The following are definitions found in the tidied dataset, "hdi_dat.rds":
+
+Country: The name of the country (character)
+
+HDI_Rank: The ranking of the country's HDI (numeric, range 1-188)
+
+HDI: The country's HDI value (numeric, range .352-.949)
+
+Life_Expectancy: The country's average life expectancy, in years (numeric, range 48.9-84.2)
+
+Mean_Years_of_Schooling: The mean amount of years that individuals in the country attend school (numeric, range 1.4-13.4)
+
+Gender_Development_Index: Value that measures gender equality in the country. Higher values indicate greater levels of equality (numeric, range .609-1.032)
+
+2015_Population: The country's 2015 population, in millions (numeric, range .1-1376)
+
+2015_Total_Unemployment_Rate: The country's 2015 total unemployment rate, in % (numeric, range .2-53.9)
+
+Internet_Users: % of the country's population that has Internet access (numeric, range 1.1-98.2)

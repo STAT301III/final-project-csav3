@@ -1,7 +1,9 @@
 # Unprocessed Data
 
-Dataset or datasets in their orginial format prior to any cleaning or processing. 
+This subdirectory contains my final project dataset in its preprocessed format.
 
-# Citations
+# Citation
 
-Include a citation for each dataset here. 
+Kumar, Sudhir (2018): “Human Development Reports.” Version 5. Kaggle. https://www.kaggle.com/sudhirnl7/human-development-index-hdi
+
+

@@ -1,7 +1,7 @@
 # Processed Data
 
-File contains the processed dataset - maybe datasets. That is, the data is now ready for an EDA and for future analyses. It may be useful to save the data in both a `.rds` and `.csv` format. 
+This directory contains processed data. That is, the data is now ready for an EDA and for future analyses. The main dataset used for my project was hdi_dat.rds. The other dataset in this directory was merely used to create an HDI world map.
 
 # Codebook
 
-A variable codebook should also be included for each dataset. Might consider a condensed codebook displayed in this document for quick reference.
+An informative codebook is included in this directory for my project dataset, hdi_dat.rds.
